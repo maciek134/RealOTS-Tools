@@ -1,0 +1,437 @@
+unit Unit1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, XPMan, StdCtrls, Menus, ExtCtrls, ShellAPI, INIFiles, ComCtrls,
+  Spin, IdBaseComponent, IdComponent, IdTCPConnection, IdTCPClient, IdHTTP, RegExpr;
+
+type
+  TPosition = packed record
+    X, Y, Z: LongWord;                   {   0 .. 11  } // = 12
+  end;
+
+  TOutfit = packed record
+    Id: LongWord;
+    Head, Body, Legs, Feet: LongWord;    {   0 .. 19  } // = 20
+  end;
+
+  TLight = packed record
+    Power, Color: LongWord;              {   0 .. 7   } // = 8
+  end;
+
+  TCreature = packed record
+    Id: LongWord;                        {   0 .. 3   } // = 4
+    Name: String[28];                    {   4 .. 31  } // = 28
+    Position: TPosition;                 {  32 .. 43  } // = 12
+    Unknown1: array [0..13] of LongWord; {  44 .. 91  } // = 52
+    Outfit: TOutfit;                     {  92 .. 111 } // = 20
+    Light: TLight;                       { 112 .. 119 } // = 8
+    Unknown2: array [0..4] of LongWord;  { 120 .. 135 } // = 16
+    Visible: LongBool;                   { 136 .. 139 } // = 4
+    Speed: LongWord;                     { 140 .. 143 } // = 4
+    Unknown3: array [0..3] of LongWord;  { 144 .. 155 } // = 12
+  end;
+
+  TTibia = class
+  private
+    ProcessID: Cardinal;
+    WinHandle: HWND;
+    Pos: Integer;
+    ExpLast, ExpPerHour: Integer;
+
+    procedure WriteMemory(Address: Cardinal; Value: Integer); overload;
+    procedure WriteMemory(Address: Cardinal; Value: String); overload;
+
+    function ReadMemoryInt(Address: Cardinal): Integer;
+    function ReadMemoryStr(Address: Cardinal): String;
+    function Battle: Cardinal;
+    function CountMonsters: Integer;
+  public
+    constructor Create(WinHandle: HWND);
+
+    procedure SetWindowTitle(Pattern: String);
+    procedure ResetWindowTitle;
+    procedure RecountExp;
+    procedure Light;
+    procedure LightupEnemies;
+    function GetCharacterName: String;
+  end;
+
+  TForm1 = class(TForm)
+    GroupBox1: TGroupBox;
+    ListBox1: TListBox;
+    PopupMenu1: TPopupMenu;
+    Refresh1: TMenuItem;
+    Edit1: TEdit;
+    Timer1: TTimer;
+    Timer2: TTimer;
+    Label1: TLabel;
+    CheckBox1: TCheckBox;
+    Timer3: TTimer;
+    CheckBox2: TCheckBox;
+    PageControl1: TPageControl;
+    TabSheet1: TTabSheet;
+    TabSheet2: TTabSheet;
+    GroupBox2: TGroupBox;
+    GroupBox3: TGroupBox;
+    TabSheet3: TTabSheet;
+    GroupBox4: TGroupBox;
+    CheckBox3: TCheckBox;
+    CheckBox4: TCheckBox;
+    SpinEdit1: TSpinEdit;
+    CheckBox5: TCheckBox;
+    SpinEdit2: TSpinEdit;
+    IdHTTP1: TIdHTTP;
+    Label3: TLabel;
+    ComboBox1: TComboBox;
+    Panel1: TPanel;
+    Label2: TLabel;
+    procedure FormCreate(Sender: TObject);
+    procedure Refresh1Click(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure Timer2Timer(Sender: TObject);
+    procedure Label1MouseEnter(Sender: TObject);
+    procedure Label1MouseLeave(Sender: TObject);
+    procedure Label1Click(Sender: TObject);
+    procedure Timer3Timer(Sender: TObject);
+    procedure ListBox1DblClick(Sender: TObject);
+    procedure Label3Click(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+  Lp: Integer;
+  Clients: array of TTibia;
+  Config: TINIFile;
+
+const
+  BattleStart = $56C8B4; //7.7
+  BattleMax = 147;  //7.7
+  //Fish_Use = $6C2648; //7.7
+
+  StatusbarText = $6C3C40; //7.7
+  StatusbarTime = $6C3C3C; //7.7
+
+  AttackID =        $56C81C; //7.7
+  PlayerMaxMP =     $56C828; //7.7
+  PlayerMP =        $56C82C;  //7.7
+  PlayerMagic =     $56C838;  //7.7
+  PlayerLevel =     $56C83C;  //7.7
+  PlayerExp =       $56C840; //7.7
+  PlayerMaxHP =     $56C844;  //7.7
+  PlayerHP =        $56C848;   //7.7
+  PlayerID =        $56C84C; //7.7
+
+  BackpackOpen = $574DD8; //1=open 0=closed
+  BackpackItem = $574E14; //id first item in bp
+  BackpackItems = $574E10; //total items in bp
+  BackpackFirstCount = $574E18; //count of 1 item
+
+  UseID = $6C2690; //7.7
+  PlayerX = $5776E8;  //7.7
+  PlayerY = $5776E4;   //7.7
+  PlayerZ = $5776E0;  //7.7
+  DistChar = 156;   //7.7
+  DistSpeed = 140;   //7.7
+  DistLight = $70;    //7.7
+  DistLightC = $74;    //7.7
+  DistBackpack = $1EC;  //7.7
+  DistVisible = $88;    //7.7
+  DistLookType = $5C; //7.7
+  DistHead = $60;  //7.7
+  DistBody = $64;  //7.7
+  DistLegs = $68;   //7.7
+  DistFeet = $6C;  //7.7
+  DistID = -4;  //7.7
+  DistX = $20;   //7.7
+  DistY = $24;  //7.7
+  DistZ = $28;  //7.7
+
+implementation
+
+{$R *.dfm}
+
+procedure TTibia.WriteMemory(Address: Cardinal; Value: Integer);
+var
+  Dummy: Cardinal;
+begin
+  WriteProcessMemory(Self.ProcessID, Ptr(Address), @Value, 4, Dummy);
+end;
+
+procedure TTibia.WriteMemory(Address: Cardinal; Value: String);
+var
+  Temp: Byte;
+  i, Dummy: Cardinal;
+begin
+  for i := 1 to Length(Value) do
+  begin
+    Temp := Ord(Value[i]);
+    WriteProcessMemory(Self.ProcessID, Ptr(Address+i-1), @Temp, 1, Dummy);
+    if (i = Cardinal(Length(Value))) then
+    begin
+      Temp := 0;
+      WriteProcessMemory(Self.ProcessID, Ptr(Address + i), @Temp, 1, Dummy);
+    end;
+  end;
+end;
+
+function TTibia.ReadMemoryInt(Address: Cardinal): Integer;
+var
+  Dummy: Cardinal;
+begin
+  ReadProcessMemory(Self.ProcessID, Ptr(Address), @Result, 4, Dummy);
+end;
+
+function TTibia.ReadMemoryStr(Address: Cardinal): String;
+var
+  Dummy: LongWord;
+  Temp: array [1..255] of Byte;
+  I: Byte;
+begin
+  Result := '';
+  ReadProcessMemory(Self.ProcessID, Ptr(Address), @Temp[1], 255, Dummy);
+  for I := 1 to 255 do
+  begin
+    if ((Temp[i] = 0) or (Temp[i] = $0F)) then Break;
+    Result := Result + Chr(Temp[i]);
+  end;
+end;
+
+function TTibia.Battle: Cardinal;
+var
+  i: Integer;
+begin
+  Result := 0;
+  for i := 0 to BattleMax do
+  begin
+    if (ReadMemoryInt(BattleStart + (i * DistChar) + DistId) = ReadMemoryInt(PlayerID)) then
+    begin
+      Result := BattleStart + (i * DistChar);
+      Exit;
+    end;
+  end;
+end;
+
+function TTibia.CountMonsters: Integer;
+var
+  i: Integer;
+  TempAddr: Cardinal;
+begin
+  Result := 0;
+  for i := 0 to BattleMax do
+  begin
+    TempAddr := BattleStart + (i * DistChar);
+    if ((Self.ReadMemoryInt(TempAddr + DistHead) = 0) and (Self.ReadMemoryInt(TempAddr + DistBody) = 0) and (Self.ReadMemoryInt(TempAddr + DistLegs) = 0) and (Self.ReadMemoryInt(TempAddr + DistFeet) = 0)) then Inc(Result);
+  end;
+end;
+
+constructor TTibia.Create(WinHandle: HWND);
+var
+  ThreadProcess: Cardinal;
+begin
+  GetWindowThreadProcessID(WinHandle, @ThreadProcess);
+  Self.ProcessID := OpenProcess(PROCESS_ALL_ACCESS, false, ThreadProcess);
+  Self.WinHandle := WinHandle;
+  Self.ExpLast := Self.ReadMemoryInt(PlayerExp);
+end;
+
+function EnumProcess(hHwnd: HWND; lParam : integer): boolean; stdcall;
+var
+  Title, ClassName: String;
+begin
+  if (hHwnd = NULL) then
+  begin
+    Result := false;
+  end
+  else
+  begin
+    SetLength(ClassName, 255);
+    SetLength(ClassName, GetClassName(hHwnd, PChar(ClassName), Length(ClassName)));
+    SetLength(Title, 255);
+    SetLength(Title, GetWindowText(hHwnd, PChar(Title), Length(Title)));
+
+    if ((ClassName = '           ')) then
+    begin
+      SetLength(Clients, Length(Clients) + 1);
+      Clients[High(Clients)] := TTibia.Create(hHwnd);
+      Form1.ListBox1.Items.Add(Clients[High(Clients)].GetCharacterName);
+      Clients[High(Clients)].Pos := High(Clients);
+    end;
+
+    Result := true;
+  end;
+end;
+
+procedure TTibia.SetWindowTitle(Pattern: String);
+var
+  x: Integer;
+  ExpToLevel: Double;
+begin
+  x := Self.ReadMemoryInt(PlayerLevel) + 1;
+  ExpToLevel := (50 / 3 * x * x * x - 100 * x * x + 850 / 3 * x - 200) - Self.ReadMemoryInt(PlayerExp);
+  Pattern := StringReplace(Pattern, '<exp>', IntToStr(Self.ReadMemoryInt(PlayerExp)), [rfReplaceAll]);
+  Pattern := StringReplace(Pattern, '<expleft>', FloatToStr(ExpToLevel), [rfReplaceAll]);
+  if (Self.ExpPerHour = 0) then
+  begin
+    Pattern := StringReplace(Pattern, '<expph>', 'n|a', [rfReplaceAll]);
+    Pattern := StringReplace(Pattern, '<exptime>', 'n|a', [rfReplaceAll]);
+  end
+  else
+  begin
+    Pattern := StringReplace(Pattern, '<expph>', IntToStr(Self.ExpPerHour), [rfReplaceAll]);
+    Pattern := StringReplace(Pattern, '<exptime>', FormatFloat('0.##', ExpToLevel / Self.ExpPerHour), [rfReplaceAll]);
+  end;
+  Pattern := StringReplace(Pattern, '<mobcount>', IntToStr(Self.CountMonsters), [rfReplaceAll]);
+  Pattern := StringReplace(Pattern, '<level>', IntToStr(Self.ReadMemoryInt(PlayerLevel)), [rfReplaceAll]);
+  Pattern := StringReplace(Pattern, '<name>', Self.GetCharacterName, [rfReplaceAll]);
+  Pattern := StringReplace(Pattern, '<magic>', IntToStr(Self.ReadMemoryInt(PlayerMagic)), [rfReplaceAll]);
+  SetWindowText(Self.WinHandle, PChar(Pattern));
+  Form1.ListBox1.Items.Strings[Self.Pos] := '[' + Self.GetCharacterName + '] HP: ' + IntToStr(Self.ReadMemoryInt(PlayerHP)) + ' MP:' + IntToStr(Self.ReadMemoryInt(PlayerMP));
+end;
+
+procedure TTibia.ResetWindowTitle;
+begin
+  SetWindowText(Self.WinHandle, PChar('        '));
+end;
+
+procedure TTibia.RecountExp;
+begin
+  Self.ExpPerHour := Self.ExpLast * 8;
+  Self.ExpLast := Self.ReadMemoryInt(PlayerExp);
+end;
+
+procedure TTibia.Light;
+begin
+  Self.WriteMemory(Battle + DistLight, 20);
+  Self.WriteMemory(Battle + DistLightC, 208);
+end;
+
+procedure TTibia.LightupEnemies;
+var
+  i: Integer;
+begin
+  for i := 0 to BattleMax do
+  begin
+    if (Self.ReadMemoryInt(BattleStart + (i * DistChar) + DistId) <> Self.ReadMemoryInt(PlayerId)) then
+    begin
+      Self.WriteMemory(BattleStart + (i * DistChar) + DistLight, 1);
+      Self.WriteMemory(BattleStart + (i * DistChar) + DistLightC, Self.ReadMemoryInt(BattleStart + (i * DistChar) + DistBody));
+    end;
+    if (Self.ReadMemoryInt(BattleStart + (i * DistChar) + DistBody) = 0) then
+    begin
+      Self.WriteMemory(BattleStart + (i * DistChar) + DistLight, 2);
+      Self.WriteMemory(BattleStart + (i * DistChar) + DistLightC, 108);
+    end;
+  end;
+end;
+
+function TTibia.GetCharacterName: String;
+begin
+  Result := ReadMemoryStr(Battle);
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+  Config := TINIFile.Create(ExtractFilePath(Application.ExeName) + 'config');
+  Edit1.Text := Config.ReadString('General', 'TitleText', '[<name>] Lvl. <level>, Exp: <exp> (<expleft>), <expph> exp/h');
+  CheckBox1.Checked := Config.ReadBool('General', 'Light', false);
+  CheckBox2.Checked := Config.ReadBool('General', 'LightupOthers', false);
+  Form1.Left := Config.ReadInteger('Form', 'Left', 0);
+  Form1.Top := Config.ReadInteger('Form', 'Top', 0);
+  Form1.Width := Config.ReadInteger('Form', 'Width', 310);
+  Form1.Height := Config.ReadInteger('Form', 'Height', 255);
+  Refresh1Click(Refresh1);
+  Label3Click(Label1);
+end;
+
+procedure TForm1.Refresh1Click(Sender: TObject);
+begin
+  LP := 0;
+  ListBox1.Clear;
+  EnumWindows(@EnumProcess, Lp);
+end;
+
+procedure TForm1.Timer1Timer(Sender: TObject);
+var
+  i: Integer;
+begin
+  for i := 0 to High(Clients) do Clients[i].SetWindowTitle(Edit1.Text);
+end;
+
+procedure TForm1.FormClose(Sender: TObject; var Action: TCloseAction);
+var
+  i: Integer;
+begin
+  for i := 0 to High(Clients) do Clients[i].ResetWindowTitle;
+  for i := 0 to High(Clients) do ShowWindow(Clients[i].WinHandle, SW_SHOW);
+  Config.WriteString('General', 'TitleText', Edit1.Text);
+  Config.WriteBool('General', 'Light', CheckBox1.Checked);
+  Config.WriteBool('General', 'LightupOthers', CheckBox2.Checked);
+  Config.WriteInteger('Form', 'Left', Form1.Left);
+  Config.WriteInteger('Form', 'Top', Form1.Top);
+  Config.WriteInteger('Form', 'Width', Form1.Width);
+  Config.WriteInteger('Form', 'Height', Form1.Height);
+  Config.Destroy;
+end;
+
+procedure TForm1.Timer2Timer(Sender: TObject);
+var
+  i: Integer;
+begin
+  for i := 0 to High(Clients) do Clients[i].RecountExp;
+end;
+
+procedure TForm1.Label1MouseEnter(Sender: TObject);
+begin
+  Label1.Font.Color := clBlue;
+  Label1.Font.Style := [fsUnderline];
+end;
+
+procedure TForm1.Label1MouseLeave(Sender: TObject);
+begin
+  Label1.Font.Color := clBlack;
+  Label1.Font.Style := [];
+end;
+
+procedure TForm1.Label1Click(Sender: TObject);
+begin
+  ShellExecute(0, 'open', 'http://killahforge.com/', nil, nil, SW_SHOWNORMAL);
+end;
+
+procedure TForm1.Timer3Timer(Sender: TObject);
+var
+  i: Integer;
+begin
+  if (CheckBox1.Checked) then for i := 0 to High(Clients) do Clients[i].Light;
+  if (CheckBox2.Checked) then for i := 0 to High(Clients) do Clients[i].LightupEnemies;
+end;
+
+procedure TForm1.ListBox1DblClick(Sender: TObject);
+begin
+  if (ListBox1.ItemIndex <> -1) then
+  begin
+    ShowWindow(Clients[ListBox1.ItemIndex].WinHandle, SW_SHOW);
+    SetForegroundWindow(Clients[ListBox1.ItemIndex].WinHandle);
+  end;
+end;
+
+procedure TForm1.Label3Click(Sender: TObject);
+var
+  Reg: TRegExpr;
+begin
+  Reg := TRegExpr.Create;
+  Reg.Expression := '([0-9].?) players online';
+  Reg.InputString := IdHTTP1.Get('http://www.realots.net/');
+  Reg.Exec;
+  Label3.Caption := 'There are ' + Reg.Match[0] + '!';
+  Reg.Free;
+end;
+
+end.

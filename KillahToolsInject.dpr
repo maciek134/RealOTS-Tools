@@ -1,0 +1,109 @@
+library KillahToolsInject;
+
+uses
+  SysUtils,
+  Classes,
+  Dialogs;
+
+type
+  TPosition = packed record
+    X, Y, Z: LongWord;                   {   0 .. 11  } // = 12
+  end;
+
+  TOutfit = packed record
+    Id: LongWord;
+    Head, Body, Legs, Feet: LongWord;    {   0 .. 19  } // = 20
+  end;
+
+  TLight = packed record
+    Power, Color: LongWord;              {   0 .. 7   } // = 8
+  end;
+
+  TCreature = packed record
+    Id: LongWord;                        {   0 .. 3   } // = 4
+    Name: String[28];                    {   4 .. 31  } // = 28
+    Position: TPosition;                 {  32 .. 43  } // = 12
+    Unknown1: array [0..13] of LongWord; {  44 .. 91  } // = 52
+    Outfit: TOutfit;                     {  92 .. 111 } // = 20
+    Light: TLight;                       { 112 .. 119 } // = 8
+    Unknown2: array [0..4] of LongWord;  { 120 .. 135 } // = 16
+    Visible: LongBool;                   { 136 .. 139 } // = 4
+    Speed: LongWord;                     { 140 .. 143 } // = 4
+    Unknown3: array [0..3] of LongWord;  { 144 .. 155 } // = 12
+  end;
+
+  TBattle = packed record
+    Creatures: array [0..147] of TCreature;
+  end;
+
+  PBattle = ^TBattle;
+
+  TSkills = packed record
+    FistP, ClubP, SwordP, AxeP, DistanceP, ShieldingP, FishingP,
+    Fist, Club, Sword, Axe, Distance, Shielding, Fishing: LongWord;
+  end;
+
+  TPlayer = record
+    Id, Target,
+    HP, MaxHP,
+    MP, MaxMP,
+    Experience, Level,
+    MagicLevel, MagicLevelP: LongWord;
+    Skills: TSkills;
+  end;
+
+// Fist: $56C7F8;
+
+{$R *.res}
+
+function Player: TPlayer; export;
+begin
+
+end;
+
+{
+function Battle: Cardinal;
+var
+  i: Integer;
+begin
+  Result := 0;
+  for i := 0 to BattleMax do
+  begin
+    if (ReadMemoryInt(BattleStart + (i * DistChar) + DistId) = ReadMemoryInt(PlayerID)) then
+    begin
+      Result := BattleStart + (i * DistChar);
+      Exit;
+    end;
+  end;
+end;
+
+function CountMonsters: Integer;
+var
+  i: Integer;
+  TempAddr: Cardinal;
+begin
+  Result := 0;
+  for i := 0 to BattleMax do
+  begin
+
+  end;
+end;
+
+constructor Create(WinHandle: HWND);
+begin
+  GetWindowThreadProcessID(WinHandle, @ThreadProcess);
+  ProcessID := OpenProcess(PROCESS_ALL_ACCESS, false, ThreadProcess);
+  WinHandle := WinHandle;
+  ExpLast := ReadMemoryInt(PlayerExp);
+end;
+}
+
+exports
+  Player;
+
+var
+  Battle: PBattle;
+begin
+  Battle := Ptr($56C8B0);
+  ShowMessage(Battle.Creatures[0].Name);
+end.

@@ -1,0 +1,10 @@
+[General]
+TitleText=[<name>] Lvl. <level>, Exp: <exp> (<expleft>), Mlvl: <magic> :: Pozdrowienia dla torg'a!
+Light=1
+LightupEnemies=0
+LightupOthers=0
+[Form]
+Left=18
+Top=785
+Width=354
+Height=221
